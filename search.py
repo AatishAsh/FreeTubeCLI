@@ -3,23 +3,30 @@ import urllib.request
 import urllib.parse
 import yt_dlp
 
-# List of some reliable public Invidious instances
+# List of reliable public Invidious instances
 INVIDIOUS_INSTANCES = [
     "https://inv.tux.rs",
     "https://invidious.io.lol",
     "https://iv.ggtyler.dev",
     "https://invidious.lunar.icu",
-    "https://yewtu.be"
+    "https://yewtu.be",
+    "https://invidious.projectsegfau.lt",
+    "https://invidious.nerdvpn.de",
+    "https://invidious.privacydev.net"
 ]
 
-def search_youtube(query, is_playlist=False, max_results=10):
-    """
-    Search YouTube using Invidious API. 
-    Falls back to yt-dlp if Invidious fails.
-    """
-    # If it's a direct URL, yt-dlp is still best for metadata extraction
+# Global cache
+SEARCH_CACHE = {}
+
+def search_youtube(query, is_playlist=False, page=1, max_results=20):
+    cache_key = (query, is_playlist, page)
+    if cache_key in SEARCH_CACHE:
+        return SEARCH_CACHE[cache_key]
+
     if query.startswith(('http://', 'https://')):
-        return _search_ytdlp(query, is_playlist, max_results)
+        res = _search_ytdlp(query, is_playlist, page=1)
+        if res: SEARCH_CACHE[cache_key] = res
+        return res
 
     # Try Invidious instances
     for instance in INVIDIOUS_INSTANCES:
@@ -27,37 +34,46 @@ def search_youtube(query, is_playlist=False, max_results=10):
             params = urllib.parse.urlencode({
                 'q': query,
                 'type': 'playlist' if is_playlist else 'video',
-                'page': '1'
+                'page': str(page)
             })
             url = f"{instance}/api/v1/search?{params}"
             
-            with urllib.request.urlopen(url, timeout=5) as response:
+            with urllib.request.urlopen(url, timeout=7) as response:
                 data = json.loads(response.read().decode())
                 
-                # Format Invidious results to match our expected internal structure
+                if not isinstance(data, list):
+                    continue
+
                 results = []
-                for item in data[:max_results]:
-                    # Map Invidious fields to common metadata fields
+                for item in data:
+                    # Some instances return a lot, we cap it at max_results
+                    if len(results) >= max_results: break
+                    
                     formatted = {
                         'id': item.get('videoId') or item.get('playlistId'),
                         'title': item.get('title'),
                         'uploader': item.get('author'),
                         'duration': item.get('lengthSeconds'),
                         'thumbnail': item.get('videoThumbnails', [{}])[-1].get('url') if item.get('videoThumbnails') else None,
-                        'url': f"https://www.youtube.com/watch?v={item.get('videoId')}" if item.get('videoId') else None
+                        'url': f"https://www.youtube.com/watch?v={item.get('videoId')}" if item.get('videoId') else None,
+                        'type': 'video' if item.get('videoId') else 'playlist'
                     }
-                    results.append(formatted)
+                    if formatted['id']: # Only add if we have an ID
+                        results.append(formatted)
                 
                 if results:
+                    SEARCH_CACHE[cache_key] = results
                     return results
-        except Exception as e:
-            # Try next instance
+        except Exception:
             continue
 
     # Final Fallback to yt-dlp
-    return _search_ytdlp(query, is_playlist, max_results)
+    res = _search_ytdlp(query, is_playlist, page=page, max_results=max_results)
+    if res: SEARCH_CACHE[cache_key] = res
+    return res
 
-def _search_ytdlp(query, is_playlist=False, max_results=10):
+def _search_ytdlp(query, is_playlist=False, page=1, max_results=20):
+    total_to_fetch = page * max_results
     ydl_opts = {
         'quiet': True,
         'no_warnings': True,
@@ -66,7 +82,7 @@ def _search_ytdlp(query, is_playlist=False, max_results=10):
     }
 
     if not query.startswith(('http://', 'https://')):
-        search_query = f"ytsearch{max_results}:{query}"
+        search_query = f"ytsearch{total_to_fetch}:{query}"
     else:
         search_query = query
 
@@ -74,23 +90,10 @@ def _search_ytdlp(query, is_playlist=False, max_results=10):
         try:
             info = ydl.extract_info(search_query, download=False)
             if 'entries' in info:
-                return info['entries']
+                all_entries = info['entries']
+                start_idx = (page - 1) * max_results
+                return all_entries[start_idx : start_idx + max_results]
             else:
                 return [info]
         except Exception:
             return []
-
-def get_stream_url(video_url, audio_only=False):
-    """Extract the direct stream URL for a given video/audio."""
-    ydl_opts = {
-        'format': 'bestaudio/best' if audio_only else 'bestvideo+bestaudio/best',
-        'quiet': True,
-        'no_warnings': True,
-    }
-    
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        try:
-            info = ydl.extract_info(video_url, download=False)
-            return info['url']
-        except Exception:
-            return None

@@ -5,15 +5,22 @@ from PIL import Image
 from rich.text import Text
 from rich.style import Style
 
+# Global cache for ASCII art
+# Format: {url: rich.text.Text}
+IMAGE_CACHE = {}
+
 def get_ascii_image(url, width=40):
     """
     Downloads an image and converts it to Half-Block ASCII art.
-    Uses hex colors for better terminal compatibility.
+    Includes in-memory caching to prevent redundant processing.
     """
+    if url in IMAGE_CACHE:
+        return IMAGE_CACHE[url]
+
     try:
         # 1. Download image with a User-Agent to avoid blocks
         req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-        with urllib.request.urlopen(req) as response:
+        with urllib.request.urlopen(req, timeout=5) as response:
             img_data = response.read()
         
         img = Image.open(io.BytesIO(img_data)).convert("RGB")
@@ -37,14 +44,13 @@ def get_ascii_image(url, width=40):
                 r1, g1, b1 = pixels[x, y]
                 r2, g2, b2 = pixels[x, y+1]
                 
-                # Convert to hex for maximum compatibility
                 fg = f"#{r1:02x}{g1:02x}{b1:02x}"
                 bg = f"#{r2:02x}{g2:02x}{b2:02x}"
                 
-                # Use 'Style' to ensure foreground and background are applied correctly
                 result.append("▀", style=Style(color=fg, bgcolor=bg))
             result.append("\n")
             
+        IMAGE_CACHE[url] = result
         return result
     except Exception as e:
         return Text(f"[Image Error: {e}]", style="red")
