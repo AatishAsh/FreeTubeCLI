@@ -23,14 +23,14 @@ FreeTubeCLI depends on `mpv` for media playback.
 
 ### From GitHub (Recommended)
 ```bash
-git clone https://github.com/yourusername/freetube-cli.git
+git clone https://github.com/AatishAsh/FreeTubeCLI.git
 cd freetube-cli
 pip install .
 ```
 
 ### Direct Install
 ```bash
-pip install git+https://github.com/yourusername/freetube-cli.git
+pip install git+https://github.com/AatishAsh/FreeTubeCLI.git
 ```
 
 ## Usage
