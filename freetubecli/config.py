@@ -8,6 +8,7 @@ CONFIG_FILE = CONFIG_DIR / "config.json"
 DEFAULT_CONFIG = {
     "quality": "1080",
     "audio_only": False,
+    "auto_play": True,
     "cookies": None
 }
 

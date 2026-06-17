@@ -7,7 +7,7 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.live import Live
 from rich import print as rprint
-from image import get_ascii_image
+from .image import get_ascii_image
 
 console = Console()
 
@@ -177,7 +177,7 @@ def select_video(entries, page=1):
             combined = Table.grid(expand=True)
             combined.add_row(card)
             combined.add_row(results_panel)
-            combined.add_row(f"[dim center]↑/↓: Nav | ENTER: Select | q: Back[/dim center]")
+            combined.add_row(f"[dim center]↑/↓: Nav | ENTER: Play | a: Add to Playlist | q: Back[/dim center]")
             return combined
 
         current_index = 1 if page > 1 else 0
@@ -191,7 +191,14 @@ def select_video(entries, page=1):
                 elif key == "DOWN":
                     current_index = (current_index + 1) % len(nav_entries)
                 elif key == "ENTER":
-                    return nav_entries[current_index]
+                    entry = nav_entries[current_index]
+                    if entry.get('type') == 'nav':
+                        return entry
+                    return {"type": "play", "entry": entry}
+                elif key == "a":
+                    entry = nav_entries[current_index]
+                    if entry.get('type') != 'nav':
+                        return {"type": "add", "entry": entry}
                 elif key == "QUIT":
                     return None
                 
