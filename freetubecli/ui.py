@@ -179,7 +179,7 @@ def select_video(entries, page=1, show_thumbnails=True):
             combined = Table.grid(expand=True)
             combined.add_row(card)
             combined.add_row(results_panel)
-            combined.add_row(f"[dim center]↑/↓: Nav | ENTER: Play | a: Add to Playlist | q: Back[/dim center]")
+            combined.add_row(f"[dim center]↑/↓: Nav | ENTER: Play | a: Add to Playlist | d: Download | q: Back[/dim center]")
             return combined
 
         current_index = 1 if page > 1 else 0
@@ -201,6 +201,10 @@ def select_video(entries, page=1, show_thumbnails=True):
                     entry = nav_entries[current_index]
                     if entry.get('type') != 'nav':
                         return {"type": "add", "entry": entry}
+                elif key == "d":
+                    entry = nav_entries[current_index]
+                    if entry.get('type') != 'nav':
+                        return {"type": "download", "entry": entry}
                 elif key == "QUIT":
                     return None
                 

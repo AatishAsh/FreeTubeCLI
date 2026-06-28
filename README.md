@@ -61,6 +61,7 @@ freetube-cli "coding music" --no-thumbnails
 - **`↑/↓`**: Navigate menus and search results.
 - **`ENTER`**: Play video or select option.
 - **`a`**: Add highlighted video to a playlist.
+- **`d`**: Download highlighted video/audio offline.
 - **`q`**: Go back or exit.
 
 ### During Playback (mpv)

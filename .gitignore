@@ -156,3 +156,5 @@ cython_debug/
 .gemini/
 *.swp
 .DS_Store
+Downloads/
+.freetube_tmp/

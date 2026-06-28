@@ -199,16 +199,54 @@ def manage_playlists(state):
                 import time; time.sleep(1)
         elif sub_action == "select_play":
             if entries:
-                res = select_video(entries, page=1, show_thumbnails=state.show_thumbnails)
-                if res and res.get('type') == 'play':
+                while True:
+                    res = select_video(entries, page=1, show_thumbnails=state.show_thumbnails)
+                    if not res:
+                        break
+                        
+                    action = res.get('type')
                     selected = res.get('entry')
-                    try:
-                        idx_sel = entries.index(selected)
-                        to_play = entries[idx_sel:]
-                        play_queue(to_play, audio_only=state.audio_only, cookies=state.cookies, quality=state.quality, show_thumbnails=state.show_thumbnails)
-                    except ValueError:
-                        url = selected.get('url') or f"https://www.youtube.com/watch?v={selected.get('id')}"
-                        play_media(url, audio_only=state.audio_only, cookies=state.cookies, quality=state.quality, show_thumbnails=state.show_thumbnails)
+                    
+                    if action == 'play':
+                        try:
+                            idx_sel = entries.index(selected)
+                            to_play = entries[idx_sel:]
+                            play_queue(to_play, audio_only=state.audio_only, cookies=state.cookies, quality=state.quality, show_thumbnails=state.show_thumbnails)
+                        except ValueError:
+                            url = selected.get('url') or f"https://www.youtube.com/watch?v={selected.get('id')}"
+                            play_media(url, audio_only=state.audio_only, cookies=state.cookies, quality=state.quality, show_thumbnails=state.show_thumbnails)
+                        break
+                    elif action == 'download':
+                        options = [
+                            {"label": "Download Video (MP4)", "value": "video"},
+                            {"label": "Download Audio Only", "value": "audio"},
+                            {"label": "Cancel", "value": "cancel"}
+                        ]
+                        idx = choice_menu(f"Download Options", options)
+                        if idx != -1 and options[idx]["value"] != "cancel":
+                            from .downloader import download_media
+                            show_header(state)
+                            audio_only = (options[idx]["value"] == "audio")
+                            download_media(selected, audio_only=audio_only, cookies=state.cookies)
+                    elif action == 'add':
+                        playlist_names = playlist.get_playlist_names()
+                        options = [{"label": "[ New Playlist ]", "value": "new"}]
+                        options.extend([{"label": name_item, "value": name_item} for name_item in playlist_names])
+                        options.append({"label": "Cancel", "value": "cancel"})
+                        
+                        idx = choice_menu("Add to Playlist", options)
+                        if idx != -1 and options[idx]["value"] != "cancel":
+                            target_name = None
+                            if options[idx]["value"] == "new":
+                                name_new = console.input("\n[bold cyan]Enter new playlist name: [/bold cyan]").strip()
+                                if name_new: target_name = name_new
+                            else:
+                                target_name = options[idx]["value"]
+                            
+                            if target_name:
+                                success, msg = playlist.add_to_playlist(target_name, selected)
+                                rprint(f"[{'green' if success else 'red'}]{msg}[/{'green' if success else 'red'}]")
+                                import time; time.sleep(1)
             else:
                 rprint("[red]Playlist is empty.[/red]")
                 import time; time.sleep(1)
@@ -286,8 +324,20 @@ def run_search_and_play(query, is_playlist, state):
                             success, msg = playlist.add_to_playlist(target_name, selected)
                             rprint(f"[{'green' if success else 'red'}]{msg}[/{'green' if success else 'red'}]")
                             import time; time.sleep(1)
+                if action == 'download':
+                    options = [
+                        {"label": "Download Video (MP4)", "value": "video"},
+                        {"label": "Download Audio Only", "value": "audio"},
+                        {"label": "Cancel", "value": "cancel"}
+                    ]
+                    idx = choice_menu(f"Download Options", options)
+                    if idx != -1 and options[idx]["value"] != "cancel":
+                        from .downloader import download_media
+                        show_header(state)
+                        audio_only = (options[idx]["value"] == "audio")
+                        download_media(selected, audio_only=audio_only, cookies=state.cookies)
                     continue # Back to selection
-                
+
                 if action == 'play':
                     if state.auto_play:
                         try:
