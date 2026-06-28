@@ -6,6 +6,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich import print as rprint
 
+from rich.table import Table
 from .search import search_youtube
 from .ui import select_video, choice_menu
 from .player import play_media, play_queue
@@ -21,13 +22,15 @@ class AppState:
         self.audio_only = config.get("audio_only", False)
         self.auto_play = config.get("auto_play", True)
         self.cookies = config.get("cookies")
+        self.show_thumbnails = config.get("show_thumbnails", True)
 
     def save(self):
         save_config({
             "quality": self.quality,
             "audio_only": self.audio_only,
             "auto_play": self.auto_play,
-            "cookies": self.cookies
+            "cookies": self.cookies,
+            "show_thumbnails": self.show_thumbnails
         })
 
 def check_dependencies():
@@ -39,7 +42,7 @@ def check_dependencies():
 
 def show_header(state):
     console.clear()
-    status = f"[cyan]Quality:[/cyan] {state.quality}p | [cyan]Audio-Only:[/cyan] {'Yes' if state.audio_only else 'No'}"
+    status = f"[cyan]Quality:[/cyan] {state.quality}p | [cyan]Audio-Only:[/cyan] {'Yes' if state.audio_only else 'No'} | [cyan]Thumbnails:[/cyan] {'Yes' if state.show_thumbnails else 'No'}"
     if state.cookies:
         status += f" | [cyan]Cookies:[/cyan] Active"
     
@@ -101,6 +104,7 @@ def settings_menu(state):
             {"label": f"Quality: {state.quality}p", "value": "quality"},
             {"label": f"Audio-Only: {'On' if state.audio_only else 'Off'}", "value": "audio"},
             {"label": f"Auto-play: {'On' if state.auto_play else 'Off'}", "value": "autoplay"},
+            {"label": f"Thumbnails: {'On' if state.show_thumbnails else 'Off'}", "value": "thumbnails"},
             {"label": "Back", "value": "back"}
         ]
         
@@ -125,9 +129,13 @@ def settings_menu(state):
         elif action == "autoplay":
             state.auto_play = not state.auto_play
             state.save()
+        elif action == "thumbnails":
+            state.show_thumbnails = not state.show_thumbnails
+            state.save()
 
 def manage_playlists(state):
     while True:
+        show_header(state)
         playlist_names = playlist.get_playlist_names()
         if not playlist_names:
             rprint("[yellow]No playlists found.[/yellow]")
@@ -143,22 +151,64 @@ def manage_playlists(state):
             
         name = options[idx]["value"]
         
+        all_playlists = playlist.load_playlists()
+        entries = all_playlists.get(name, [])
+        
         sub_options = [
-            {"label": "Play Playlist", "value": "play"},
+            {"label": "Play Entire Playlist", "value": "play"},
+            {"label": "Select & Play Video", "value": "select_play"},
             {"label": "Delete Playlist", "value": "delete"},
             {"label": "Back", "value": "back"}
         ]
         
+        show_header(state)
+        # Display the list of videos in the playlist
+        if entries:
+            video_table = Table(show_header=True, header_style="bold magenta", expand=True)
+            video_table.add_column("#", width=3, justify="right")
+            video_table.add_column("Title", ratio=3)
+            video_table.add_column("Channel", ratio=2)
+            video_table.add_column("Duration", ratio=1)
+            
+            limit = 8
+            for i, entry in enumerate(entries[:limit]):
+                title = entry.get('title', 'Unknown')
+                uploader = entry.get('uploader', 'Unknown')
+                duration = entry.get('duration')
+                duration_str = f"{int(duration)//60}:{int(duration)%60:02d}" if duration else "??:??"
+                video_table.add_row(str(i + 1), title, uploader, duration_str)
+                
+            footer = ""
+            if len(entries) > limit:
+                footer = f"\n[dim]... and {len(entries) - limit} more videos[/dim]"
+                
+            console.print(Panel(video_table, title=f"[bold cyan] Videos in '{name}' ({len(entries)} total) [/bold cyan]", border_style="cyan", subtitle=footer))
+        else:
+            rprint("[yellow]Playlist is empty.[/yellow]")
+            
         sub_idx = choice_menu(f"Playlist: {name}", sub_options)
         if sub_idx == -1 or sub_options[sub_idx]["value"] == "back":
             continue
             
         sub_action = sub_options[sub_idx]["value"]
         if sub_action == "play":
-            all_playlists = playlist.load_playlists()
-            entries = all_playlists.get(name, [])
             if entries:
-                play_queue(entries, audio_only=state.audio_only, cookies=state.cookies, quality=state.quality)
+                play_queue(entries, audio_only=state.audio_only, cookies=state.cookies, quality=state.quality, show_thumbnails=state.show_thumbnails)
+            else:
+                rprint("[red]Playlist is empty.[/red]")
+                import time; time.sleep(1)
+        elif sub_action == "select_play":
+            if entries:
+                res = select_video(entries, page=1, show_thumbnails=state.show_thumbnails)
+                if res and res.get('type') == 'play':
+                    selected = res.get('entry')
+                    try:
+                        idx_sel = entries.index(selected)
+                        to_play = entries[idx_sel:]
+                        play_queue(to_play, audio_only=state.audio_only, cookies=state.cookies, quality=state.quality, show_thumbnails=state.show_thumbnails)
+                    except ValueError:
+                        url = selected.get('url') or f"https://www.youtube.com/watch?v={selected.get('id')}"
+                        play_media(url, audio_only=state.audio_only, cookies=state.cookies, quality=state.quality, show_thumbnails=state.show_thumbnails)
             else:
                 rprint("[red]Playlist is empty.[/red]")
                 import time; time.sleep(1)
@@ -173,6 +223,7 @@ def run_search_and_play(query, is_playlist, state):
     current_page = 1
     
     while True:
+        show_header(state)
         rprint(f"\n[cyan]Fetching Page {current_page} for:[/cyan] [bold]{query}[/bold]...")
         entries = search_youtube(query, is_playlist=is_playlist, page=current_page)
         
@@ -181,24 +232,27 @@ def run_search_and_play(query, is_playlist, state):
             if current_page > 1:
                 rprint("[yellow]Returning to Page 1...[/yellow]")
                 current_page = 1
+                import time; time.sleep(1)
                 continue
             console.input("\nPress Enter to return...")
             return
 
         if is_playlist:
             rprint(f"[green]Playing playlist with {len(entries)} items...[/green]")
-            play_queue(entries, audio_only=state.audio_only, cookies=state.cookies, quality=state.quality)
+            play_queue(entries, audio_only=state.audio_only, cookies=state.cookies, quality=state.quality, show_thumbnails=state.show_thumbnails)
             break
         elif len(entries) == 1 and query.startswith(('http://', 'https://')):
             # Direct video URL - play immediately
             entry = entries[0]
             url = entry.get('url') or f"https://www.youtube.com/watch?v={entry.get('id')}"
             rprint(f"[green]Playing:[/green] [bold]{entry.get('title', 'Video')}[/bold]...")
-            play_media(url, audio_only=state.audio_only, cookies=state.cookies, quality=state.quality)
+            play_media(url, audio_only=state.audio_only, cookies=state.cookies, quality=state.quality, show_thumbnails=state.show_thumbnails)
             break
         else:
             while True:
-                res = select_video(entries, page=current_page)
+                show_header(state)
+                rprint(f"\n[cyan]Results for:[/cyan] [bold]{query}[/bold] (Page {current_page})")
+                res = select_video(entries, page=current_page, show_thumbnails=state.show_thumbnails)
                 
                 if not res:
                     return # Cancelled
@@ -239,15 +293,15 @@ def run_search_and_play(query, is_playlist, state):
                         try:
                             idx = entries.index(selected)
                             to_play = entries[idx:]
-                            play_queue(to_play, audio_only=state.audio_only, cookies=state.cookies, quality=state.quality)
+                            play_queue(to_play, audio_only=state.audio_only, cookies=state.cookies, quality=state.quality, show_thumbnails=state.show_thumbnails)
                         except ValueError:
                             url = selected.get('url') or f"https://www.youtube.com/watch?v={selected.get('id')}"
                             rprint(f"[green]Playing:[/green] [bold]{selected.get('title')}[/bold]...")
-                            play_media(url, audio_only=state.audio_only, cookies=state.cookies, quality=state.quality)
+                            play_media(url, audio_only=state.audio_only, cookies=state.cookies, quality=state.quality, show_thumbnails=state.show_thumbnails)
                     else:
                         url = selected.get('url') or f"https://www.youtube.com/watch?v={selected.get('id')}"
                         rprint(f"[green]Playing:[/green] [bold]{selected.get('title')}[/bold]...")
-                        play_media(url, audio_only=state.audio_only, cookies=state.cookies, quality=state.quality)
+                        play_media(url, audio_only=state.audio_only, cookies=state.cookies, quality=state.quality, show_thumbnails=state.show_thumbnails)
                     return # Exit after playing
 
 def main():
@@ -261,6 +315,7 @@ def main():
     parser.add_argument("--playlist", action="store_true", help="Handle query as a playlist")
     parser.add_argument("--cookies", help="Cookies path or browser")
     parser.add_argument("--quality", choices=["144", "240", "360", "480", "720", "1080", "1440", "2160"], help="Max height")
+    parser.add_argument("--no-thumbnails", action="store_true", help="Disable video thumbnails generation/display")
 
     args = parser.parse_args()
     
@@ -271,6 +326,7 @@ def main():
     if args.quality: state.quality = args.quality
     if args.audio_only: state.audio_only = True
     if args.cookies: state.cookies = args.cookies
+    if args.no_thumbnails: state.show_thumbnails = False
 
     if args.query:
         # One-shot mode

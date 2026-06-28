@@ -8,9 +8,9 @@ A minimalist, high-performance YouTube CLI for watching videos and playlists in 
 - **Ad-Free Playback**: Uses `mpv` for a clean, distraction-free experience.
 - **Local Playlists**: Create and manage your own video collections locally.
 - **Auto-play**: Keep the vibe going with automatic next-video playback.
-- **ASCII Thumbnails**: High-quality terminal image previews.
+- **ASCII Thumbnails**: High-quality terminal image previews (can be disabled for faster page loading).
 - **Audio-Only Mode**: Save bandwidth and listen to music/podcasts.
-- **Configurable**: Persist your quality preferences and cookie settings.
+- **Configurable**: Persist your quality, autoplay, and thumbnail preferences, as well as cookie settings.
 
 ## Prerequisites
 FreeTubeCLI depends on `mpv` for media playback.
@@ -50,6 +50,9 @@ freetube-cli https://www.youtube.com/watch?v=...
 
 # Audio-only mode
 freetube-cli "podcast" --audio-only
+
+# Disable video thumbnails for faster loading
+freetube-cli "coding music" --no-thumbnails
 ```
 
 ## Controls

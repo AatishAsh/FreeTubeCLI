@@ -9,7 +9,8 @@ DEFAULT_CONFIG = {
     "quality": "1080",
     "audio_only": False,
     "auto_play": True,
-    "cookies": None
+    "cookies": None,
+    "show_thumbnails": True
 }
 
 def load_config():

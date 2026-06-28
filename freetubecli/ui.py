@@ -81,7 +81,7 @@ def choice_menu(title, options, current_index=0):
                 
                 live.update(render_menu(current_index), refresh=True)
 
-def select_video(entries, page=1):
+def select_video(entries, page=1, show_thumbnails=True):
     """
     Video selection menu with thumbnails, arrow-key navigation, and pagination.
     Optimized for stability and to prevent terminal scrolling glitches.
@@ -99,18 +99,20 @@ def select_video(entries, page=1):
         )
 
     # Use Live even for the loading state to keep terminal clean
-    with Live(render_loading(), console=console, auto_refresh=False, transient=True) as live:
+    initial_render = render_loading() if show_thumbnails else ""
+    with Live(initial_render, console=console, auto_refresh=False, transient=True) as live:
         cached_thumbs = []
-        for entry in entries:
-            thumb_url = entry.get('thumbnail')
-            if not thumb_url and entry.get('thumbnails'):
-                thumb_url = entry.get('thumbnails')[-1].get('url')
-            
-            if thumb_url:
-                # Reduced width to 40 to save vertical space
-                cached_thumbs.append(get_ascii_image(thumb_url, width=40))
-            else:
-                cached_thumbs.append(None)
+        if show_thumbnails:
+            for entry in entries:
+                thumb_url = entry.get('thumbnail')
+                if not thumb_url and entry.get('thumbnails'):
+                    thumb_url = entry.get('thumbnails')[-1].get('url')
+                
+                if thumb_url:
+                    # Reduced width to 40 to save vertical space
+                    cached_thumbs.append(get_ascii_image(thumb_url, width=40))
+                else:
+                    cached_thumbs.append(None)
 
         # Add navigation entries
         nav_entries = entries.copy()
@@ -123,7 +125,7 @@ def select_video(entries, page=1):
             
             if entry.get('type') == 'nav':
                 card_content = f"\n[bold green]Navigate to {entry['title']}[/bold green]\n"
-                card = Panel(card_content, title=f" Page {page} ", border_style="yellow", expand=True, height=12)
+                card = Panel(card_content, title=f" Page {page} ", border_style="yellow", expand=True, height=12 if show_thumbnails else 6)
             else:
                 title = entry.get('title', 'Unknown')
                 uploader = entry.get('uploader', 'Unknown')
@@ -138,7 +140,7 @@ def select_video(entries, page=1):
                 
                 layout_table = Table.grid(padding=(0, 2), expand=True)
                 thumb_idx = idx - (1 if page > 1 else 0)
-                thumb = cached_thumbs[thumb_idx] if 0 <= thumb_idx < len(cached_thumbs) else None
+                thumb = cached_thumbs[thumb_idx] if (show_thumbnails and 0 <= thumb_idx < len(cached_thumbs)) else None
                 
                 if thumb:
                     layout_table.add_column(width=42) 
@@ -154,7 +156,7 @@ def select_video(entries, page=1):
                     border_style="green",
                     expand=True,
                     title_align="left",
-                    height=12
+                    height=12 if show_thumbnails else 6
                 )
 
             # Results List (Reduced count to 5 for stability)
