@@ -176,7 +176,15 @@ def manage_playlists(state):
                 uploader = entry.get('uploader', 'Unknown')
                 duration = entry.get('duration')
                 duration_str = f"{int(duration)//60}:{int(duration)%60:02d}" if duration else "??:??"
-                video_table.add_row(str(i + 1), title, uploader, duration_str)
+                
+                # Check if downloaded
+                is_downloaded = False
+                video_id = entry.get('id')
+                if video_id:
+                    is_downloaded = any(v.get('id') == video_id for v in all_playlists.get("Downloaded", []))
+                download_badge = " [bold green][✓][/bold green]" if is_downloaded else ""
+                
+                video_table.add_row(str(i + 1), f"{title}{download_badge}", uploader, duration_str)
                 
             footer = ""
             if len(entries) > limit:

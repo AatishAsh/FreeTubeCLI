@@ -7,13 +7,15 @@ import time
 import os
 import math
 import select
+import tempfile
+import shutil
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 from rich import print as rprint
 from rich.live import Live
 
-from .ui import raw_mode, console
+from .ui import raw_mode, console, choice_menu
 from .image import get_ascii_image
 
 class MPVClient:
@@ -191,7 +193,8 @@ def render_audio_tui_layout(
     volume,
     show_thumbnails,
     cached_ascii_thumb,
-    entries
+    entries,
+    download_status=None
 ):
     """Renders the play panel with equalizer, progress, volume, queue and optional thumbnail."""
     if not entry:
@@ -219,9 +222,17 @@ def render_audio_tui_layout(
     
     track_info = f"Track {playlist_pos + 1} of {playlist_count}" if playlist_pos is not None else ""
     
+    download_badge = ""
+    if download_status == "downloaded":
+        download_badge = "  [bold green][✓ Local][/bold green]"
+    elif download_status == "downloading":
+        download_badge = "  [bold yellow][⧗ Downloading...][/bold yellow]"
+    elif download_status == "not_downloaded":
+        download_badge = "  [dim][⬇ Press 'd' to download][/dim]"
+        
     meta_table.add_row(f"[bold yellow]{title}[/bold yellow]")
     meta_table.add_row(f"[cyan]Channel:[/cyan] {uploader}")
-    meta_table.add_row(f"[cyan]State:[/cyan] {state_str}  [dim]({track_info})[/dim]")
+    meta_table.add_row(f"[cyan]State:[/cyan] {state_str}  [dim]({track_info})[/dim]{download_badge}")
     
     # Progress
     meta_table.add_row(make_progress_bar(time_pos, duration))
@@ -263,6 +274,8 @@ def render_audio_tui_layout(
         ("↑/↓", "bold yellow"), " Vol +/-  |  ",
         ("< / ,", "bold yellow"), " Prev  |  ",
         ("> / .", "bold yellow"), " Next  |  ",
+        ("a", "bold green"), " Add to Playlist  |  ",
+        ("d", "bold green"), " Download  |  ",
         ("q / Esc", "bold red"), " Return"
     )
     meta_table.add_row("")
@@ -296,11 +309,31 @@ def render_audio_tui_layout(
         expand=True
     )
 
+DOWNLOADING_IDS = set()
+
+def start_background_download(entry, audio_only=True, cookies=None):
+    if not entry or isinstance(entry, str):
+        return
+    video_id = entry.get('id') or entry.get('url')
+    if not video_id:
+        return
+    if video_id in DOWNLOADING_IDS:
+        return
+        
+    DOWNLOADING_IDS.add(video_id)
+    
+    def worker():
+        try:
+            from .downloader import download_media
+            download_media(entry, audio_only=audio_only, cookies=cookies, quiet=True)
+        finally:
+            DOWNLOADING_IDS.discard(video_id)
+            
+    threading.Thread(target=worker, daemon=True).start()
+
 def play_audio_tui(entries, urls, cookies=None, show_thumbnails=True):
     """Launches mpv in background and runs interactive playback interface."""
-    tmp_dir = os.path.join(os.getcwd(), ".freetube_tmp")
-    os.makedirs(tmp_dir, exist_ok=True)
-    socket_path = os.path.join(tmp_dir, f"mpv_{os.getpid()}.sock")
+    socket_path = f".ft_mpv_{os.getpid()}.sock"
     
     # Pre-clean socket if it leftover
     if os.path.exists(socket_path):
@@ -366,6 +399,19 @@ def play_audio_tui(entries, urls, cookies=None, show_thumbnails=True):
                         current_thumb_url = None
                         cached_ascii_thumb = None
                     
+                    # Resolve download status for layout
+                    download_status = "not_downloaded"
+                    if current_entry and not isinstance(current_entry, str):
+                        video_id = current_entry.get('id') or current_entry.get('url')
+                        if video_id:
+                            if video_id in DOWNLOADING_IDS:
+                                download_status = "downloading"
+                            else:
+                                from .playlist import load_playlists
+                                playlists = load_playlists()
+                                if any(v.get('id') == video_id or v.get('url') == video_id for v in playlists.get("Downloaded", [])):
+                                    download_status = "downloaded"
+                    
                     renderable = render_audio_tui_layout(
                         current_entry,
                         playlist_pos,
@@ -376,7 +422,8 @@ def play_audio_tui(entries, urls, cookies=None, show_thumbnails=True):
                         volume,
                         show_thumbnails,
                         cached_ascii_thumb,
-                        entries
+                        entries,
+                        download_status
                     )
                     live.update(renderable, refresh=True)
                     
@@ -398,6 +445,61 @@ def play_audio_tui(entries, urls, cookies=None, show_thumbnails=True):
                         client.send_command(["playlist-next"])
                     elif key in ("<", ",", "p", "P"):
                         client.send_command(["playlist-prev"])
+                    elif key in ("a", "A"):
+                        if current_entry and not isinstance(current_entry, str):
+                            live.stop()
+                            from .playlist import get_playlist_names, add_to_playlist
+                            playlist_names = get_playlist_names()
+                            options = [{"label": "[ New Playlist ]", "value": "new"}]
+                            options.extend([{"label": name, "value": name} for name in playlist_names])
+                            options.append({"label": "Cancel", "value": "cancel"})
+                            
+                            idx = choice_menu("Add Currently Playing to Playlist", options)
+                            if idx != -1 and options[idx]["value"] != "cancel":
+                                target_name = None
+                                if options[idx]["value"] == "new":
+                                    name = console.input("\n[bold cyan]Enter new playlist name: [/bold cyan]").strip()
+                                    if name: target_name = name
+                                else:
+                                    target_name = options[idx]["value"]
+                                
+                                if target_name:
+                                    success, msg = add_to_playlist(target_name, current_entry)
+                                    rprint(f"[{'green' if success else 'red'}]{msg}[/{'green' if success else 'red'}]")
+                                    time.sleep(1.5)
+                            live.start()
+                    elif key in ("d", "D"):
+                        if current_entry and not isinstance(current_entry, str):
+                            video_id = current_entry.get('id') or current_entry.get('url')
+                            if video_id:
+                                if video_id in DOWNLOADING_IDS:
+                                    live.stop()
+                                    rprint("[yellow]Download is already in progress in background.[/yellow]")
+                                    time.sleep(1.5)
+                                    live.start()
+                                else:
+                                    from .playlist import load_playlists
+                                    playlists = load_playlists()
+                                    is_downloaded = any(v.get('id') == video_id or v.get('url') == video_id for v in playlists.get("Downloaded", []))
+                                    if is_downloaded:
+                                        live.stop()
+                                        rprint("[green]This track is already downloaded.[/green]")
+                                        time.sleep(1.5)
+                                        live.start()
+                                    else:
+                                        live.stop()
+                                        options = [
+                                            {"label": "Download Audio Only (MP3)", "value": "audio"},
+                                            {"label": "Download Video (MP4)", "value": "video"},
+                                            {"label": "Cancel", "value": "cancel"}
+                                        ]
+                                        idx = choice_menu("Download Currently Playing", options)
+                                        if idx != -1 and options[idx]["value"] != "cancel":
+                                            is_audio = (options[idx]["value"] == "audio")
+                                            start_background_download(current_entry, audio_only=is_audio, cookies=cookies)
+                                            rprint("[cyan]Background download started![/cyan]")
+                                            time.sleep(1.0)
+                                        live.start()
                         
     finally:
         # Cleanup mpv process
@@ -412,12 +514,51 @@ def play_audio_tui(entries, urls, cookies=None, show_thumbnails=True):
         try:
             if os.path.exists(socket_path):
                 os.remove(socket_path)
-            if os.path.exists(tmp_dir) and not os.listdir(tmp_dir):
-                os.rmdir(tmp_dir)
         except Exception:
             pass
             
+    if process.returncode and process.returncode > 0:
+        show_playback_error_troubleshooting(urls)
+        
     return 0
+
+def get_ytdl_path():
+    """Locates the yt-dlp executable inside the current virtual environment or system PATH."""
+    venv_dir = os.path.dirname(sys.executable)
+    for name in ["yt-dlp", "yt-dlp.exe"]:
+        path = os.path.join(venv_dir, name)
+        if os.path.isfile(path) and os.access(path, os.X_OK):
+            return path
+            
+    path = shutil.which("yt-dlp")
+    if path:
+        return path
+        
+    return None
+
+def show_playback_error_troubleshooting(url_or_urls):
+    """Displays a premium troubleshoot guide to resolve common media playback errors."""
+    error_text = (
+        "[bold red]Playback Error Detected![/bold red]\n\n"
+        "It looks like mpv failed to play the video. Here are the most common ways to fix this:\n\n"
+        "[bold yellow]1. Upgrade yt-dlp (Most Common)[/bold yellow]\n"
+        "YouTube frequently updates its signatures, causing older versions of yt-dlp to fail.\n"
+        "Run this command in the project directory to upgrade:\n"
+        "  [cyan]./venv/bin/pip install --upgrade yt-dlp[/cyan]\n\n"
+        "[bold yellow]2. Pass Browser Cookies[/bold yellow]\n"
+        "If YouTube is rate-limiting your IP, or if the video is age-restricted/private,\n"
+        "pass cookies from your browser using the [cyan]--cookies[/cyan] flag. E.g.:\n"
+        "  [cyan]freetube-cli --cookies chrome \"your search\"[/cyan] (or [cyan]firefox[/cyan], [cyan]safari[/cyan], [cyan]edge[/cyan])\n\n"
+        "[bold yellow]3. Install ffmpeg[/bold yellow]\n"
+        "Some high-quality video/audio formats cannot be merged or played without ffmpeg.\n"
+        "Install it via your system package manager:\n"
+        "  Linux:   [cyan]sudo apt install ffmpeg[/cyan] (Ubuntu/Debian) or [cyan]sudo pacman -S ffmpeg[/cyan] (Arch)\n"
+        "  macOS:   [cyan]brew install ffmpeg[/cyan]\n\n"
+        "[bold yellow]4. Check Network / VPN[/bold yellow]\n"
+        "If you are using a VPN or proxy, YouTube might have blocked the IP range. Try switching servers."
+    )
+    rprint(Panel(error_text, border_style="red", expand=True))
+    console.input("\nPress Enter to return to menu...")
 
 def play_media(media_url, audio_only=False, cookies=None, quality="1080", show_thumbnails=True):
     """
@@ -438,12 +579,19 @@ def play_media(media_url, audio_only=False, cookies=None, quality="1080", show_t
         else: # Likely a browser name
             cmd.append(f"--ytdl-raw-options=cookies-from-browser={cookies}")
 
-    # Inherit stdin, stdout, stderr so the user can control mpv (e.g., space for pause)
+    # Inject yt-dlp path
+    ytdl_path = get_ytdl_path()
+    if ytdl_path:
+        cmd.append(f"--script-opts=ytdl_hook-ytdl_path={ytdl_path}")
+
     try:
         process = subprocess.run(cmd)
+        if process.returncode > 0:
+            show_playback_error_troubleshooting(media_url)
         return process.returncode
     except Exception as e:
         print(f"Error launching mpv: {e}", file=sys.stderr)
+        show_playback_error_troubleshooting(media_url)
         return 1
 
 def play_queue(entries, audio_only=False, cookies=None, quality="1080", show_thumbnails=True):
@@ -462,7 +610,7 @@ def play_queue(entries, audio_only=False, cookies=None, quality="1080", show_thu
                 
     if not urls:
         return 0
-
+ 
     if audio_only:
         # Launch custom Audio TUI
         return play_audio_tui(entries, urls, cookies=cookies, show_thumbnails=show_thumbnails)
@@ -476,11 +624,23 @@ def play_queue(entries, audio_only=False, cookies=None, quality="1080", show_thu
         else:
             cmd.append(f"--ytdl-raw-options=cookies-from-browser={cookies}")
 
+    # Inject yt-dlp path
+    ytdl_path = get_ytdl_path()
+    if ytdl_path:
+        cmd.append(f"--script-opts=ytdl_hook-ytdl_path={ytdl_path}")
+
     rprint(f"\n[bold green]Starting playback of {len(urls)} items...[/bold green]")
     rprint("[dim]Navigation: '<' Previous | '>' Next | 'q' Menu | 'space' Pause[/dim]")
     
     try:
-        subprocess.run(cmd)
+        process = subprocess.run(cmd)
+        if process.returncode > 0:
+            show_playback_error_troubleshooting(urls)
+        return process.returncode
     except KeyboardInterrupt:
         rprint("\n[yellow]Playback stopped.[/yellow]")
-    return 0
+        return 0
+    except Exception as e:
+        print(f"Error launching mpv: {e}", file=sys.stderr)
+        show_playback_error_troubleshooting(urls)
+        return 1

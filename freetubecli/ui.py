@@ -132,9 +132,18 @@ def select_video(entries, page=1, show_thumbnails=True):
                 duration = entry.get('duration')
                 duration_str = f"{int(duration)//60}:{int(duration)%60:02d}" if duration else "??:??"
                 
+                # Check if downloaded
+                from .playlist import load_playlists
+                playlists = load_playlists()
+                is_downloaded = False
+                video_id = entry.get('id')
+                if video_id:
+                    is_downloaded = any(v.get('id') == video_id for v in playlists.get("Downloaded", []))
+                download_badge = " [bold green][✓ Local][/bold green]" if is_downloaded else ""
+
                 meta_table = Table.grid(padding=(0, 1), expand=True)
                 meta_table.add_column(justify="left", ratio=1)
-                meta_table.add_row(f"[bold yellow]{title}[/bold yellow]")
+                meta_table.add_row(f"[bold yellow]{title}[/bold yellow]{download_badge}")
                 meta_table.add_row(f"[cyan]Channel:[/cyan] {uploader}")
                 meta_table.add_row(f"[cyan]Duration:[/cyan] {duration_str}")
                 
